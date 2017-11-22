@@ -5,6 +5,8 @@
     <!-- relevant frames -->
     <param name="odom_frame" value="odom"/>
     <param name="laser_frame" value="laser"/>
+    <param name="base_frame" value="base_link"/>
+    <param name="global_frame" value="/map"/>    
 
     <!-- defines minimum fitness for candidates for pose publishing -->
     <param name="icp_fitness_threshold" value="100"/>    <!-- analyzing the code, this is not even being used... -->
