@@ -29,62 +29,51 @@
 
 #include <ros/ros.h>
 
-#include <std_msgs/String.h>
-#include <sensor_msgs/PointCloud.h>
-#include <sensor_msgs/PointCloud2.h>
+#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <laser_geometry/laser_geometry.h>
 #include <nav_msgs/OccupancyGrid.h>
-//for point_cloud::fromROSMsg
-#include <pcl/ros/conversions.h>
-#include <pcl_conversions/pcl_conversions.h>
+#include <std_msgs/String.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <sensor_msgs/LaserScan.h>
-#include <pcl/point_types.h>
-#include <pcl/io/pcd_io.h>
-#include <laser_geometry/laser_geometry.h>
+#include <sensor_msgs/PointCloud.h>
+#include <sensor_msgs/PointCloud2.h>
 #include <tf/transform_listener.h>
 
+//for point_cloud::fromROSMsg
 #include <pcl/registration/icp.h>
 #include <pcl/registration/icp_nl.h>
 #include <pcl/registration/transforms.h>
 #include <pcl/kdtree/kdtree_flann.h>
-
-#include <geometry_msgs/PoseWithCovarianceStamped.h>
+#include <pcl/conversions.h>
+#include <pcl_conversions/pcl_conversions.h>
+#include <pcl/point_types.h>
+#include <pcl/io/pcd_io.h>
 
 #include <boost/thread/mutex.hpp>
 
 boost::mutex scan_callback_mutex;
 
-//these should be parameters
-// defines how good the match has to be to create a candidate for publishing a pose
-double ICP_FITNESS_THRESHOLD = 100.1;// =  0.025;
-//defines how much distance deviation from amcl to icp pose is needed to make us publish a pose
-double DIST_THRESHOLD = 0.05;
-// same for angle
-double ANGLE_THRESHOLD = 0.01;
-double ANGLE_UPPER_THRESHOLD = M_PI / 6;
-// accept only scans one second old or younger
-double AGE_THRESHOLD = 1;
-double UPDATE_AGE_THRESHOLD = 1;
+//Parameters:
+double ICP_FITNESS_THRESHOLD;
+double DIST_THRESHOLD;
+double ANGLE_THRESHOLD;
+double ANGLE_UPPER_THRESHOLD;
+double AGE_THRESHOLD;
+double UPDATE_AGE_THRESHOLD;
+double ICP_INLIER_THRESHOLD;
+double ICP_INLIER_DIST;
+double POSE_COVARIANCE_TRANS;
+double ICP_NUM_ITER;
+double SCAN_RATE;
 
-double ICP_INLIER_THRESHOLD = 0.9;
-double ICP_INLIER_DIST = 0.1;
-
-double POSE_COVARIANCE_TRANS = 1.5;
-double ICP_NUM_ITER = 250;
-
-double SCAN_RATE = 2;
-
-std::string BASE_LASER_FRAME = "/base_laser_link";
-std::string ODOM_FRAME = "/odom_combined";
+std::string ODOM_FRAME, BASE_FRAME, GLOBAL_FRAME;
 
 ros::NodeHandle *nh = 0;
-ros::Publisher pub_output_;
-ros::Publisher pub_output_scan;
+//ros::Publisher pub_output_;
+//ros::Publisher pub_output_scan;
 ros::Publisher pub_output_scan_transformed;
 ros::Publisher pub_info_;
-
 ros::Publisher pub_pose;
-
 
 laser_geometry::LaserProjection *projector_ = 0;
 tf::TransformListener *listener_ = 0;
@@ -95,33 +84,21 @@ typedef pcl::PointCloud<pcl::PointXYZ> PointCloudT;
 
 boost::shared_ptr< sensor_msgs::PointCloud2> output_cloud = boost::shared_ptr<sensor_msgs::PointCloud2>(new sensor_msgs::PointCloud2());
 boost::shared_ptr< sensor_msgs::PointCloud2> scan_cloud = boost::shared_ptr<sensor_msgs::PointCloud2>(new sensor_msgs::PointCloud2());
+boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud_xyz;
+pcl::KdTree<pcl::PointXYZ>::Ptr mapTree;
 
 bool we_have_a_map = false;
 bool we_have_a_scan = false;
 bool we_have_a_scan_transformed = false;
-
 bool use_sim_time = false;
 
 int lastScan = 0;
 int actScan = 0;
+int lastTimeSent = -1000;
+int count_sc_ = 0;
 
-/*inline void
-  pcl::transformAsMatrix (const tf::Transform& bt, Eigen::Matrix4f &out_mat)
-{
-  double mv[12];
-  bt.getBasis ().getOpenGLSubMatrix (mv);
-
-  tf::Vector3 origin = bt.getOrigin ();
-
-  out_mat (0, 0) = mv[0]; out_mat (0, 1) = mv[4]; out_mat (0, 2) = mv[8];
-  out_mat (1, 0) = mv[1]; out_mat (1, 1) = mv[5]; out_mat (1, 2) = mv[9];
-  out_mat (2, 0) = mv[2]; out_mat (2, 1) = mv[6]; out_mat (2, 2) = mv[10];
-
-  out_mat (3, 0) = out_mat (3, 1) = out_mat (3, 2) = 0; out_mat (3, 3) = 1;
-  out_mat (0, 3) = origin.x ();
-  out_mat (1, 3) = origin.y ();
-  out_mat (2, 3) = origin.z ();
-}*/
+ros::Time paramsWereUpdated;
+ros::Time last_processed_scan;
 
 inline void
 matrixAsTransfrom (const Eigen::Matrix4f &out_mat,  tf::Transform& bt)
@@ -148,17 +125,12 @@ matrixAsTransfrom (const Eigen::Matrix4f &out_mat,  tf::Transform& bt)
 }
 
 
-boost::shared_ptr<pcl::PointCloud<pcl::PointXYZ> > cloud_xyz;
-
-pcl::KdTree<pcl::PointXYZ>::Ptr mapTree;
-
-
 pcl::KdTree<pcl::PointXYZ>::Ptr getTree(pcl::PointCloud<pcl::PointXYZ>::Ptr cloudb)
 {
     pcl::KdTree<pcl::PointXYZ>::Ptr tree;
     tree.reset (new pcl::KdTreeFLANN<pcl::PointXYZ>);
 
-    tree->setInputCloud (cloudb);
+    tree->setInputCloud(cloudb);
     return tree;
 }
 
@@ -181,7 +153,7 @@ void mapCallback(const nav_msgs::OccupancyGrid& msg)
     cloud_xyz->is_dense = false;
     std_msgs::Header header;
     header.stamp = ros::Time(0);
-    header.frame_id = "/map";
+    header.frame_id = GLOBAL_FRAME;
     cloud_xyz->header = pcl_conversions::toPCL(header);
 
     pcl::PointXYZ point_xyz;
@@ -210,10 +182,6 @@ void mapCallback(const nav_msgs::OccupancyGrid& msg)
 }
 
 
-int lastTimeSent = -1000;
-
-int count_sc_ = 0;
-
 bool getTransform(tf::StampedTransform &trans , const std::string parent_frame, const std::string child_frame, const ros::Time stamp)
 {
     bool gotTransform = false;
@@ -241,7 +209,6 @@ bool getTransform(tf::StampedTransform &trans , const std::string parent_frame, 
     return gotTransform;
 }
 
-ros::Time last_processed_scan;
 
 void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
 {
@@ -260,8 +227,6 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
         return;
     }
 
-
-    //projector_.transformLaserScanToPointCloud("base_link",*scan_in,cloud,listener_);
     if (!scan_callback_mutex.try_lock())
         return;
 
@@ -282,12 +247,11 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
     //ROS_DEBUG("count_sc %i MUTEX LOCKED", count_sc_);
 
     //if (count_sc_ > 10)
-    //if (count_sc_ > 10)
     {
         count_sc_ = 0;
 
         tf::StampedTransform base_at_laser;
-        if (!getTransform(base_at_laser, ODOM_FRAME, "base_link", scan_in_time))
+        if (!getTransform(base_at_laser, ODOM_FRAME, BASE_FRAME, scan_in_time))
         {
             ROS_WARN("Did not get base pose at laser scan time");
             scan_callback_mutex.unlock();
@@ -304,14 +268,14 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
         we_have_a_scan = false;
         bool gotTransform = false;
 
-        if (!listener_->waitForTransform("/map", cloud.header.frame_id, cloud.header.stamp, ros::Duration(0.05)))
+        if (!listener_->waitForTransform(GLOBAL_FRAME, cloud.header.frame_id, cloud.header.stamp, ros::Duration(0.5)))
         {
             scan_callback_mutex.unlock();
-            ROS_WARN("SnapMapICP no map to cloud transform found MUTEX UNLOCKED");
+            ROS_WARN("SnapMapICP no map to cloud transform found MUTEX UNLOCKED (%s)", cloud.header.frame_id.c_str());
             return;
         }
 
-        if (!listener_->waitForTransform("/map", "/base_link", cloud.header.stamp, ros::Duration(0.05)))
+        if (!listener_->waitForTransform(GLOBAL_FRAME, BASE_FRAME, cloud.header.stamp, ros::Duration(0.5)))
         {
             scan_callback_mutex.unlock();
             ROS_WARN("SnapMapICP no map to base transform found MUTEX UNLOCKED");
@@ -324,7 +288,7 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             try
             {
                 gotTransform = true;
-                listener_->transformPointCloud ("/map",cloud,cloudInMap);
+                listener_->transformPointCloud (GLOBAL_FRAME,cloud,cloudInMap);
             }
             catch (...)
             {
@@ -346,8 +310,7 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             try
             {
                 gotTransform = true;
-                listener_->lookupTransform("/map", "/base_link",
-                                           cloud.header.stamp , oldPose);
+                listener_->lookupTransform(GLOBAL_FRAME, BASE_FRAME,cloud.header.stamp , oldPose);
             }
             catch (tf::TransformException ex)
             {
@@ -379,7 +342,7 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             pcl::fromROSMsg(*output_cloud,*myMapCloud);
             pcl::fromROSMsg(cloud2,*myScanCloud);
 
-            reg.setInputCloud(myScanCloud);
+            reg.setInputSource/*Cloud*/(myScanCloud);
             reg.setInputTarget(myMapCloud);
 
             PointCloudT unused;
@@ -428,7 +391,7 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             t =  t * oldPose;
 
             tf::StampedTransform base_after_icp;
-            if (!getTransform(base_after_icp, ODOM_FRAME, "base_link", ros::Time(0)))
+            if (!getTransform(base_after_icp, ODOM_FRAME, BASE_FRAME, ros::Time(0)))
             {
                 ROS_WARN("Did not get base pose at now");
                 scan_callback_mutex.unlock();
@@ -454,13 +417,13 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
 
             double cov = POSE_COVARIANCE_TRANS;
 
-            //if ((actScan - lastTimeSent > UPDATE_AGE_THRESHOLD) && ((dist > DIST_THRESHOLD) || (angleDist > ANGLE_THRESHOLD)) && (angleDist < ANGLE_UPPER_THRESHOLD))
-            //  if ( reg.getFitnessScore()  <= ICP_FITNESS_THRESHOLD )
+            // if ((actScan - lastTimeSent > UPDATE_AGE_THRESHOLD) && ((dist > DIST_THRESHOLD) || (angleDist > ANGLE_THRESHOLD)) && (angleDist < ANGLE_UPPER_THRESHOLD))
+            // if ( reg.getFitnessScore()  <= ICP_FITNESS_THRESHOLD )
             if ((actScan - lastTimeSent > UPDATE_AGE_THRESHOLD) && ((dist > DIST_THRESHOLD) || (angleDist > ANGLE_THRESHOLD)) && (inlier_perc > ICP_INLIER_THRESHOLD) && (angleDist < ANGLE_UPPER_THRESHOLD))
             {
                 lastTimeSent = actScan;
                 geometry_msgs::PoseWithCovarianceStamped pose;
-                pose.header.frame_id = "map";
+                pose.header.frame_id = GLOBAL_FRAME;
                 pose.pose.pose.position.x = t.getOrigin().x();
                 pose.pose.pose.position.y = t.getOrigin().y();
 
@@ -489,21 +452,17 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
 }
 
 
-ros::Time paramsWereUpdated;
-
-
 void updateParams()
 {
     paramsWereUpdated = ros::Time::now();
-    // nh.param<std::string>("default_param", default_param, "default_value");
     nh->param<bool>("/USE_SIM_TIME", use_sim_time, false);
     nh->param<double>("icp_fitness_threshold", ICP_FITNESS_THRESHOLD, 100 );
     nh->param<double>("age_threshold", AGE_THRESHOLD, 1);
+    nh->param<double>("update_age_threshold", UPDATE_AGE_THRESHOLD, 1);    
     nh->param<double>("angle_upper_threshold", ANGLE_UPPER_THRESHOLD, 1);
     nh->param<double>("angle_threshold", ANGLE_THRESHOLD, 0.01);
-    nh->param<double>("update_age_threshold", UPDATE_AGE_THRESHOLD, 1);
     nh->param<double>("dist_threshold", DIST_THRESHOLD, 0.01);
-    nh->param<double>("icp_inlier_threshold", ICP_INLIER_THRESHOLD, 0.88);
+    nh->param<double>("icp_inlier_threshold", ICP_INLIER_THRESHOLD, 0.9);
     nh->param<double>("icp_inlier_dist", ICP_INLIER_DIST, 0.1);
     nh->param<double>("icp_num_iter", ICP_NUM_ITER, 250);
     nh->param<double>("pose_covariance_trans", POSE_COVARIANCE_TRANS, 0.5);
@@ -511,19 +470,22 @@ void updateParams()
     if (SCAN_RATE < .001)
         SCAN_RATE  = .001;
     //ROS_DEBUG("PARAM UPDATE");
-
 }
+
 
 int main(int argc, char** argv)
 {
 
-// Init the ROS node
     ros::init(argc, argv, "snapmapicp");
+    ros::NodeHandle public_nh;
     ros::NodeHandle nh_("~");
     nh = &nh_;
+    std::string LASER_FRAME;
 
-    nh->param<std::string>("odom_frame", ODOM_FRAME, "/odom_combined");
-    nh->param<std::string>("base_laser_frame", BASE_LASER_FRAME, "/base_laser_link");
+    nh->param<std::string>("odom_frame", ODOM_FRAME, "odom");
+    nh->param<std::string>("laser_frame", LASER_FRAME, "laser");
+    nh->param<std::string>("base_frame", BASE_FRAME, "base_link");
+    nh->param<std::string>("global_frame", GLOBAL_FRAME, "/map");
 
     last_processed_scan = ros::Time::now();
 
@@ -531,22 +493,19 @@ int main(int argc, char** argv)
     tf::TransformListener listener;
     listener_ = &listener;
 
-    pub_info_ =  nh->advertise<std_msgs::String> ("SnapMapICP", 1);
-    pub_output_ = nh->advertise<sensor_msgs::PointCloud2> ("map_points", 1);
-    pub_output_scan = nh->advertise<sensor_msgs::PointCloud2> ("scan_points", 1);
-    pub_output_scan_transformed = nh->advertise<sensor_msgs::PointCloud2> ("scan_points_transformed", 1);
-    pub_pose = nh->advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
+    pub_info_ =  public_nh.advertise<std_msgs::String> ("SnapMapICP", 1);
+    //pub_output_ = public_nh.advertise<sensor_msgs::PointCloud2> ("map_points", 1);
+    //pub_output_scan = public_nh.advertise<sensor_msgs::PointCloud2> ("scan_points", 1);
+    pub_output_scan_transformed = public_nh.advertise<sensor_msgs::PointCloud2> ("scan_points_transformed", 1);
+    pub_pose = public_nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
 
-    ros::Subscriber subMap = nh_.subscribe("map", 1, mapCallback);
-    ros::Subscriber subScan = nh_.subscribe("base_scan", 1, scanCallback);
+    ros::Subscriber subMap = public_nh.subscribe("map", 1, mapCallback);
+    ros::Subscriber subScan = public_nh.subscribe("scan", 1, scanCallback);
 
     ros::Rate loop_rate(5);
 
-    listener_->waitForTransform("/base_link", "/map",
-                                ros::Time(0), ros::Duration(30.0));
-
-    listener_->waitForTransform(BASE_LASER_FRAME, "/map",
-                                ros::Time(0), ros::Duration(30.0));
+    listener_->waitForTransform(BASE_FRAME, GLOBAL_FRAME, ros::Time(0), ros::Duration(30.0));
+    listener_->waitForTransform(LASER_FRAME, GLOBAL_FRAME, ros::Time(0), ros::Duration(30.0));
 
     ros::AsyncSpinner spinner(1);
     spinner.start();
@@ -554,7 +513,6 @@ int main(int argc, char** argv)
     updateParams();
 
     ROS_INFO("SnapMapICP running.");
-
 
     while (ros::ok())
     {

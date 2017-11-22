@@ -24,9 +24,9 @@ include_directories(
 catkin_package()
 
 add_executable(snap_map_icp src/SnapMapICP.cpp)
-add_executable(tf_pub src/TFpub.cpp)
-add_executable(freeze_cloud2 src/FreezeCloud2.cpp)
+#add_executable(tf_pub src/TFpub.cpp)
+#add_executable(freeze_cloud2 src/FreezeCloud2.cpp)
 
-target_link_libraries(tf_pub ${catkin_LIBRARIES})
-target_link_libraries(freeze_cloud2 ${catkin_LIBRARIES})
+#target_link_libraries(tf_pub ${catkin_LIBRARIES})
+#target_link_libraries(freeze_cloud2 ${catkin_LIBRARIES})
 target_link_libraries(snap_map_icp ${catkin_LIBRARIES} ${PCL_LIBRARIES})
