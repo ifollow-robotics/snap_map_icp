@@ -1,0 +1,42 @@
+<!-- Snap Map ICP Launch-->
+<launch>
+
+  <arg name="robot_id" default="ilogistics_3_0000"/>
+
+  <node pkg="snap_map_icp" type="snap_map_icp" name="snap_map_icp" output="screen">
+
+    <!-- relevant frames -->
+    <param name="laser_frame" value="$(arg robot_id)/base_link_real"/>
+    <param name="odom_frame" value="$(arg robot_id)/odom_real" />
+    <param name="base_frame" value="$(arg robot_id)/base_link_real" />
+    <param name="global_frame" value="$(arg robot_id)/map_real"/>
+
+    <remap from="/$(arg robot_id)/scan" to="/$(arg robot_id)/base_scan_real"/>
+
+    <remap from="/$(arg robot_id)/initialpose" to="/$(arg robot_id)/initialposeglobal"/>
+
+    <!-- defines minimum fitness for candidates for pose publishing -->
+    <param name="icp_fitness_threshold" value="100"/>    <!-- analyzing the code, this is not even being used... -->
+
+    <!-- accept only scans one second old or younger -->
+    <param name="age_threshold" value="3"/>              <!-- how old (seconds) laser scans can be to be considered -->
+    <param name="update_age_threshold" value="5"/>      <!-- only publish new pose after X scans -->
+
+    <!-- thresholds over distance between amcl and icp pose to trigger pose publishing -->
+
+    <!-- translation -->
+    <param name="dist_threshold" value="0.2"/>          <!-- minimum position change that will trigger a re-initialisation of amcl -->
+    <!-- rotation -->
+    <param name="angle_threshold" value="0.1"/>         <!-- minimum angle change that will trigger a re-initialisation of amcl -->
+    <param name="angle_upper_threshold" value="1"/>     <!-- max icp tf angle that will still be considered a sane match published as initial pose -->
+
+    <!-- various icp parameters: consult with icp algorithm from pcl for details -->
+    <param name="icp_inlier_threshold" value="0.68"/>    <!-- match quality -->
+    <param name="icp_inlier_dist" value="0.15"/>        <!-- meters distance a point can have to its nearest neighbot in map to be still considered as inlier -->
+    <param name="icp_num_iter" value="250"/>
+    <param name="pose_covariance_trans" value="0.5"/>   <!-- pose cov that the initial pose gets sent with -->
+
+    <!-- rate at which scans are taken -->
+    <param name="scan_rate" value="10"/>                <!-- we may decrease this to decrease computation load -->
+  </node>
+</launch>
