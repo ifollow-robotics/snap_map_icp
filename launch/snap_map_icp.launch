@@ -1,5 +1,8 @@
 <!-- Snap Map ICP Launch-->
 <launch>
+
+  <arg name="use_global_loc" default="false"/>
+
   <node pkg="snap_map_icp" type="snap_map_icp" name="snap_map_icp" output="screen">
 
     <!-- relevant frames -->
@@ -10,7 +13,11 @@
 
     <remap from="/scan" to="/lidar/scan_fused"/>
 
-    <remap from="/initialpose" to="/initialposeglobal"/>
+    <!-- <group unless="$(arg should_record)">
+        <remap from="/initialpose" to="/initialposeglobal"/>
+    </group> -->
+
+    <remap unless="$(arg use_global_loc)" from="/initialpose" to="/initialposeglobal"/>
 
     <!-- defines minimum fitness for candidates for pose publishing -->
     <param name="icp_fitness_threshold" value="100"/>    <!-- analyzing the code, this is not even being used... -->
