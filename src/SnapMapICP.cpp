@@ -330,7 +330,7 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             reg.setTransformationEpsilon (1e-6);
             // Set the maximum distance between two correspondences (src<->tgt) to 10cm
             // Note: adjust this based on the size of your datasets
-            reg.setMaxCorrespondenceDistance(0.5);
+            reg.setMaxCorrespondenceDistance(1.0);
             reg.setMaximumIterations (ICP_NUM_ITER);
             // Set the point representation
 
