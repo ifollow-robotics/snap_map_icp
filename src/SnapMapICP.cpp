@@ -33,6 +33,7 @@
 #include <laser_geometry/laser_geometry.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <std_msgs/String.h>
+#include <std_msgs/Float32.h>
 #include <sensor_msgs/point_cloud_conversion.h>
 #include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/PointCloud.h>
@@ -51,6 +52,8 @@
 
 #include <boost/thread/mutex.hpp>
 
+#include <vector> 
+
 boost::mutex scan_callback_mutex;
 
 //Parameters:
@@ -61,17 +64,29 @@ double ANGLE_UPPER_THRESHOLD;
 double AGE_THRESHOLD;
 double UPDATE_AGE_THRESHOLD;
 double ICP_INLIER_THRESHOLD;
+double ICP_INLIER_MIN_THRESHOLD;
 double ICP_INLIER_DIST;
 double POSE_COVARIANCE_TRANS;
 double ICP_NUM_ITER;
+double MAX_CORRES_DIST;
 double SCAN_RATE;
+int INLIERS_BUFFER;
+
+// Enum for parameters' set 
+enum Settings {DEFAULT,DYNAMIC_ENV};
+
+// Store last values 
+std::vector<double> buffer_inliners;
+int current_buffer_id = 0;
+float inlier_perc = 0.0;
 
 std::string ODOM_FRAME, BASE_FRAME, GLOBAL_FRAME;
 
 ros::NodeHandle *nh = 0;
-//ros::Publisher pub_output_;
+ros::Publisher pub_output_;
 //ros::Publisher pub_output_scan;
 ros::Publisher pub_output_scan_transformed;
+ros::Publisher pub_inliers;
 ros::Publisher pub_info_;
 ros::Publisher pub_pose;
 
@@ -133,7 +148,6 @@ pcl::KdTree<pcl::PointXYZ>::Ptr getTree(pcl::PointCloud<pcl::PointXYZ>::Ptr clou
     tree->setInputCloud(cloudb);
     return tree;
 }
-
 
 void mapCallback(const nav_msgs::OccupancyGrid& msg)
 {
@@ -360,7 +374,6 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             PointCloudT transformedCloud;
             pcl::transformPointCloud (*myScanCloud, transformedCloud, reg.getFinalTransformation());
 
-            double inlier_perc = 0;
             {
                 // count inliers
                 std::vector<int> nn_indices (1);
@@ -413,6 +426,8 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             std_msgs::String strmsg;
             strmsg.data = msg_c_str;
 
+            // pub_inliers.publish(inlier_perc);
+
             //ROS_DEBUG("%s", msg_c_str);
 
             double cov = POSE_COVARIANCE_TRANS;
@@ -463,15 +478,35 @@ void updateParams()
     nh->param<double>("angle_threshold", ANGLE_THRESHOLD, 0.01);
     nh->param<double>("dist_threshold", DIST_THRESHOLD, 0.01);
     nh->param<double>("icp_inlier_threshold", ICP_INLIER_THRESHOLD, 0.9);
+    nh->param<double>("icp_inlier_min_threshold", ICP_INLIER_MIN_THRESHOLD, 0.5);
     nh->param<double>("icp_inlier_dist", ICP_INLIER_DIST, 0.1);
     nh->param<double>("icp_num_iter", ICP_NUM_ITER, 250);
+    nh->param<double>("icp_max_corres_dist", MAX_CORRES_DIST, 1.0);
     nh->param<double>("pose_covariance_trans", POSE_COVARIANCE_TRANS, 0.5);
+    nh->param<int>("inliers_buffer", INLIERS_BUFFER, 5);
     nh->param<double>("scan_rate", SCAN_RATE, 2);
     if (SCAN_RATE < .001)
         SCAN_RATE  = .001;
     //ROS_DEBUG("PARAM UPDATE");
 }
 
+void updateSettings(Settings settings_icp)
+{
+    switch(settings_icp)
+        {
+            // IF standard config
+            case DEFAULT:
+                MAX_CORRES_DIST = 1.0;
+                ICP_INLIER_THRESHOLD = 0.74;
+                break;
+
+            // If config for dynamic environment 
+            case DYNAMIC_ENV:
+                MAX_CORRES_DIST = 90;
+                ICP_INLIER_THRESHOLD = 0.5;
+                break;
+        }
+}
 
 int main(int argc, char** argv)
 {
@@ -494,9 +529,10 @@ int main(int argc, char** argv)
     listener_ = &listener;
 
     pub_info_ =  public_nh.advertise<std_msgs::String> ("SnapMapICP", 1);
-    //pub_output_ = public_nh.advertise<sensor_msgs::PointCloud2> ("map_points", 1);
+    pub_output_ = public_nh.advertise<sensor_msgs::PointCloud2> ("map_points", 1);
     //pub_output_scan = public_nh.advertise<sensor_msgs::PointCloud2> ("scan_points", 1);
     pub_output_scan_transformed = public_nh.advertise<sensor_msgs::PointCloud2> ("scan_points_transformed", 1);
+    pub_inliers = public_nh.advertise<std_msgs::Float32> ("inliers_percentage", 1);
     pub_pose = public_nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
 
     ros::Subscriber subMap = public_nh.subscribe("map", 1, mapCallback);
@@ -514,13 +550,51 @@ int main(int argc, char** argv)
 
     ROS_INFO("SnapMapICP running.");
 
+    // Enum with current parameter settings
+    Settings settings_icp = DEFAULT;
+    Settings old_settings;
+    double average_inliers;
+
     while (ros::ok())
     {
+        if (buffer_inliners.size()!=0){
+            average_inliers = accumulate( buffer_inliners.begin(), buffer_inliners.end(), 0.0)/ buffer_inliners.size();
+        }
+
+        old_settings = settings_icp;
+        // Depending on the config
+        // switch(settings_icp)
+        // {
+        //     // IF standard config
+        //     case DEFAULT:
+        //         // Check the mean inliers percentages of the last %i values
+        //         // If inliers percentages have been low for too long
+        //         if (average_inliers && average_inliers < ICP_INLIER_THRESHOLD)
+        //         {
+        //             settings_icp = DYNAMIC_ENV; // Change config
+        //         }
+        //         break;
+
+        //     // If config for dynamic environment 
+        //     case DYNAMIC_ENV:
+        //         // Check the mean inliers percentages of the last %i values
+        //         // If inliers percentages have been sufficently high
+        //         if (average_inliers && average_inliers > ICP_INLIER_THRESHOLD)
+        //             {
+        //                 settings_icp = DEFAULT; // Change config
+        //             }
+        //         break;
+        // }
+        
+        // if (old_settings != settings_icp){
+        //     std::cout << "passing from settings " << old_settings << " to " << settings_icp << "\n" << std::endl;
+        // }
+             
         if (actScan > lastScan)
         {
             lastScan = actScan;
             // publish map as a pointcloud2
-            //if (we_have_a_map)
+            // if (we_have_a_map)
             //   pub_output_.publish(Ŕ);
             // publish scan as seen as a pointcloud2
             //if (we_have_a_scan)
@@ -529,6 +603,16 @@ int main(int argc, char** argv)
             if (we_have_a_scan_transformed)
                 pub_output_scan_transformed.publish(cloud2transformed);
         }
+
+        bool is_in_dynamic_env;
+        float inlier_thresh = 0.80;
+        nh->getParam("/slam_toolbox/is_in_dynamic_env", is_in_dynamic_env);
+        if (is_in_dynamic_env == true && inlier_perc > inlier_thresh)
+        {
+            ROS_WARN("ENVIRONMENT IS NO LONGER DYNAMIC (%f inliners)",inlier_perc);
+            nh->setParam("/slam_toolbox/is_in_dynamic_env", false);
+        }
+
         loop_rate.sleep();
         ros::spinOnce();
 
