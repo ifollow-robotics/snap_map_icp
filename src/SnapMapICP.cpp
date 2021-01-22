@@ -56,6 +56,7 @@ boost::mutex scan_callback_mutex;
 //Parameters:
 double ICP_FITNESS_THRESHOLD;
 double DIST_THRESHOLD;
+double MAX_CORRESPONDENCE_DIST;
 double ANGLE_THRESHOLD;
 double ANGLE_UPPER_THRESHOLD;
 double AGE_THRESHOLD;
@@ -330,7 +331,7 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             reg.setTransformationEpsilon (1e-6);
             // Set the maximum distance between two correspondences (src<->tgt) to 10cm
             // Note: adjust this based on the size of your datasets
-            reg.setMaxCorrespondenceDistance(1.0);
+            reg.setMaxCorrespondenceDistance(MAX_CORRESPONDENCE_DIST);
             reg.setMaximumIterations (ICP_NUM_ITER);
             // Set the point representation
 
@@ -462,6 +463,7 @@ void updateParams()
     nh->param<double>("angle_upper_threshold", ANGLE_UPPER_THRESHOLD, 1);
     nh->param<double>("angle_threshold", ANGLE_THRESHOLD, 0.01);
     nh->param<double>("dist_threshold", DIST_THRESHOLD, 0.01);
+    nh->param<double>("max_correspondence_dist", MAX_CORRESPONDENCE_DIST, 1.0);
     nh->param<double>("icp_inlier_threshold", ICP_INLIER_THRESHOLD, 0.9);
     nh->param<double>("icp_inlier_dist", ICP_INLIER_DIST, 0.1);
     nh->param<double>("icp_num_iter", ICP_NUM_ITER, 250);
