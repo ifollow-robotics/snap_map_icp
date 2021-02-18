@@ -25,17 +25,17 @@
     <!-- thresholds over distance between amcl and icp pose to trigger pose publishing -->
 
     <!-- translation -->
-    <param name="dist_threshold" value="0.75"/>          <!-- minimum position change that will trigger a re-initialisation of amcl -->
+    <param name="dist_threshold" value="0.2"/>          <!-- minimum position change that will trigger a re-initialisation of amcl -->
     <!-- rotation -->
     <param name="angle_threshold" value="0.1"/>         <!-- minimum angle change that will trigger a re-initialisation of amcl -->
     <param name="angle_upper_threshold" value="1"/>     <!-- max icp tf angle that will still be considered a sane match published as initial pose -->
 
     <!-- various icp parameters: consult with icp algorithm from pcl for details -->
     <param name="icp_inlier_threshold" value="0.80"/>    <!-- match quality -->
-    <param name="max_correspondence_dist" value="4"/>    <!-- Set the maximum distance between two correspondences (src<->tgt) -->
+    <param name="max_correspondence_dist" value="0.8"/>    <!-- Set the maximum distance between two correspondences (src<->tgt) -->
     <param name="icp_inlier_dist" value="0.15"/>        <!-- meters distance a point can have to its nearest neighbot in map to be still considered as inlier -->
-    <param name="icp_num_iter" value="250"/>
-    <param name="pose_covariance_trans" value="0.5"/>   <!-- pose cov that the initial pose gets sent with -->
+    <param name="icp_num_iter" value="60"/>
+    <param name="pose_covariance_trans" value="0.1"/>   <!-- pose cov that the initial pose gets sent with -->
 
     <!-- rate at which scans are taken -->
     <param name="scan_rate" value="3"/>                <!-- we may decrease this to decrease computation load -->
