@@ -9,10 +9,16 @@ find_package(catkin REQUIRED COMPONENTS
 	tf
         std_msgs
         nav_msgs
-	cmake_modules)
+	cmake_modules
+        dynamic_reconfigure)
 
 find_package(Eigen REQUIRED)
 find_package(PCL REQUIRED)
+
+generate_dynamic_reconfigure_options(
+  cfg/snap_map_icp.cfg
+  #...
+) 
 
 add_definitions(${EIGEN_DEFINITIONS})
 
@@ -20,6 +26,7 @@ include_directories(
   ${catkin_INCLUDE_DIRS}
   ${EIGEN_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS})
+  #${dynamic_reconfigure_PACKAGE_PATH}/cmake/cfgbuild.cmake)
 
 catkin_package()
 
@@ -27,6 +34,9 @@ add_executable(snap_map_icp src/SnapMapICP.cpp)
 #add_executable(tf_pub src/TFpub.cpp)
 #add_executable(freeze_cloud2 src/FreezeCloud2.cpp)
 
+#add_dependencies(snap_map_icp ${PROJECT_NAME}_gencfg)
+
 #target_link_libraries(tf_pub ${catkin_LIBRARIES})
 #target_link_libraries(freeze_cloud2 ${catkin_LIBRARIES})
 target_link_libraries(snap_map_icp ${catkin_LIBRARIES} ${PCL_LIBRARIES})
+#target_link_libraries(snap_map_icp ${catkin_LIBRARIES})

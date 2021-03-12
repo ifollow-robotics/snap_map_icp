@@ -49,6 +49,11 @@
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
 
+#include <dynamic_reconfigure/server.h>
+#include <snap_map_icp/dyn_reconfig_snapConfig.h>
+
+#include "std_msgs/Float64.h"
+
 #include <boost/thread/mutex.hpp>
 
 boost::mutex scan_callback_mutex;
@@ -66,6 +71,7 @@ double ICP_INLIER_DIST;
 double POSE_COVARIANCE_TRANS;
 double ICP_NUM_ITER;
 double SCAN_RATE;
+bool SHOULD_COMPUTE_ICP;
 
 std::string ODOM_FRAME, BASE_FRAME, GLOBAL_FRAME;
 
@@ -75,6 +81,7 @@ ros::NodeHandle *nh = 0;
 ros::Publisher pub_output_scan_transformed;
 ros::Publisher pub_info_;
 ros::Publisher pub_pose;
+ros::Publisher pub_score_;
 
 laser_geometry::LaserProjection *projector_ = 0;
 tf::TransformListener *listener_ = 0;
@@ -213,9 +220,16 @@ bool getTransform(tf::StampedTransform &trans , const std::string parent_frame, 
 
 void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
 {
+
+
     if (!we_have_a_map)
     {
         ROS_INFO("SnapMapICP waiting for map to be published");
+        return;
+    }
+
+    if (!SHOULD_COMPUTE_ICP)
+    {
         return;
     }
 
@@ -414,6 +428,10 @@ void scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_in)
             std_msgs::String strmsg;
             strmsg.data = msg_c_str;
 
+            std_msgs::Float64 estimated_pose_score;
+            estimated_pose_score.data = (float)inlier_perc;
+            pub_score_.publish(estimated_pose_score);
+
             //ROS_DEBUG("%s", msg_c_str);
 
             double cov = POSE_COVARIANCE_TRANS;
@@ -469,10 +487,29 @@ void updateParams()
     nh->param<double>("icp_num_iter", ICP_NUM_ITER, 250);
     nh->param<double>("pose_covariance_trans", POSE_COVARIANCE_TRANS, 0.5);
     nh->param<double>("scan_rate", SCAN_RATE, 2);
+    nh->param<bool>("should_compute_icp", SHOULD_COMPUTE_ICP, true);
+    
     if (SCAN_RATE < .001)
         SCAN_RATE  = .001;
     //ROS_DEBUG("PARAM UPDATE");
 }
+
+
+/*****************************************************************************/
+void reconfigure_cb(snap_map_icp::dyn_reconfig_snapConfig &config, uint32_t level)
+/*****************************************************************************/
+{
+    ROS_INFO("Reconfigure Request");
+    DIST_THRESHOLD = config.dist_threshold;
+    MAX_CORRESPONDENCE_DIST = config.max_correspondence_dist;
+    ANGLE_THRESHOLD = config.angle_threshold;
+    ICP_INLIER_THRESHOLD = config.icp_inlier_threshold;
+    POSE_COVARIANCE_TRANS = config.pose_covariance_trans;
+    ICP_NUM_ITER = config.icp_num_iter;
+    SCAN_RATE = config.scan_rate;
+    SHOULD_COMPUTE_ICP = config.should_compute_icp;
+}
+
 
 
 int main(int argc, char** argv)
@@ -483,6 +520,11 @@ int main(int argc, char** argv)
     ros::NodeHandle nh_("~");
     nh = &nh_;
     std::string LASER_FRAME;
+
+    dynamic_reconfigure::Server<snap_map_icp::dyn_reconfig_snapConfig> server;
+    dynamic_reconfigure::Server<snap_map_icp::dyn_reconfig_snapConfig>::CallbackType f;   
+    f = boost::bind(&reconfigure_cb, _1, _2);
+    server.setCallback(f);
 
     nh->param<std::string>("odom_frame", ODOM_FRAME, "odom");
     nh->param<std::string>("laser_frame", LASER_FRAME, "laser");
@@ -500,6 +542,7 @@ int main(int argc, char** argv)
     //pub_output_scan = public_nh.advertise<sensor_msgs::PointCloud2> ("scan_points", 1);
     pub_output_scan_transformed = public_nh.advertise<sensor_msgs::PointCloud2> ("scan_points_transformed", 1);
     pub_pose = public_nh.advertise<geometry_msgs::PoseWithCovarianceStamped>("initialpose", 1);
+    pub_score_ = public_nh.advertise<std_msgs::Float64> ("/snap_map_icp/estimated_pose/score", 1);
 
     ros::Subscriber subMap = public_nh.subscribe("map", 1, mapCallback);
     ros::Subscriber subScan = public_nh.subscribe("scan", 1, scanCallback);
