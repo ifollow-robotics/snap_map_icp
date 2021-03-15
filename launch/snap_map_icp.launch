@@ -41,7 +41,7 @@
     <param name="scan_rate" value="0.8"/>                <!-- we may decrease this to decrease computation load -->
 
     <!-- Should the node be doing the computation or not -->
-    <param name="should_compute_icp" value="true"/>                <!-- Turning it off allows to keep the node active without consuming CPU ressources -->
+    <param name="should_compute_icp" value="false"/>                <!-- Turning it off allows to keep the node active without consuming CPU ressources -->
 
     
   </node>
